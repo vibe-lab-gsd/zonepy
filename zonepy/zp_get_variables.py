@@ -49,7 +49,7 @@ def zp_get_variables(bldg_data, parcel_data, district_data, zoning_data):
     height_plate = bldg_json['bldg_info']['height_plate']
     height_top = bldg_json['bldg_info']['height_top']
     height_tower = bldg_json['bldg_info'].get('height_tower', 0)
-    lot_area = parcel_data['lot_area'].iloc[0]
+    lot_size = parcel_data['lot_area'].iloc[0]
     lot_depth = parcel_data['lot_depth'].iloc[0]
     lot_width = parcel_data['lot_width'].iloc[0]
     lot_type = parcel_data['lot_type'].iloc[0]
@@ -74,9 +74,9 @@ def zp_get_variables(bldg_data, parcel_data, district_data, zoning_data):
     unit_pct_3bed = units_3bed / total_units 
     unit_pct_4bed = units_4bed / total_units
     unit_size_avg = float(unit_info_df['fl_area'].mean())
-    lot_cov_bldg = (footprint / (lot_area * 43560)) * 100
-    unit_density = total_units / lot_area
-    far = fl_area / (lot_area * 43560)
+    lot_cov_bldg = (footprint / (lot_size * 43560)) * 100
+    unit_density = total_units / lot_size
+    far = fl_area / (lot_size * 43560)
 
     # Step 5: Construct the resulting DataFrame
     vars_df = pd.DataFrame({
@@ -92,7 +92,7 @@ def zp_get_variables(bldg_data, parcel_data, district_data, zoning_data):
         'height_plate': [height_plate],
         'height_top': [height_top],
         'height_tower': [height_tower],
-        'lot_area': [lot_area],
+        'lot_size': [lot_size],
         'lot_depth': [lot_depth],
         'lot_width': [lot_width],
         'lot_type': [lot_type],
