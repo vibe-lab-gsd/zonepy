@@ -141,16 +141,23 @@ def zp_run_zoning_checks(
     # 9. Add dist_abbr and muni_name for all zone IDs
     dist_abbr_map = zoning_all.set_index("zoning_id")["dist_abbr"].to_dict()
     muni_name_map = zoning_all.set_index("zoning_id")["muni_name"].to_dict()
+        
     def collect_all(ids, mapping):
-        """给一个 list of zoning_id，去 mapping 里拿值并去重。"""
         vals = []
+        def handle_one(zid):
+            if pd.isna(zid):
+                return
+            v = mapping.get(zid)
+            if isinstance(v, (list, tuple)):
+                vals.extend(v)
+            elif v is not None:
+                vals.append(v)
         for z_id in ids:
-            if pd.notna(z_id):
-                v = mapping.get(z_id)
-                if isinstance(v, (list, tuple)):
-                    vals.extend(v)
-                elif v is not None:
-                    vals.append(v)
+            if isinstance(z_id, (list, tuple)):
+                for sub_id in z_id:
+                    handle_one(sub_id)
+            else:
+                handle_one(z_id)
         seen = set()
         uniq = []
         for v in vals:
@@ -163,7 +170,7 @@ def zp_run_zoning_checks(
         "muni_base_id","muni_pd_id","muni_overlay_id"
     ]].values.tolist()
     parcel_dims["dist_abbr"] = parcel_dims["all_zone_ids"].apply(lambda ids: collect_all(ids, dist_abbr_map))
-    parcel_dims["muni_name"] = parcel_dims["all_zone_ids"].apply(lambda ids: collect_all(ids, muni_name_map))
+    parcel_dims["muni_name"] = parcel_dims["all_zone_ids"].apply(lambda ids: collect_all(ids, muni_name_map)) 
     
     # 10. Initialize false_reasons and maybe_reasons columns
     parcel_dims["false_reasons"] = None
