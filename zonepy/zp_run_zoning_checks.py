@@ -201,7 +201,7 @@ def zp_run_zoning_checks(
             parcel_dims = parcel_dims[~mask_pd]
         if print_checkpoints:
             print(f"___planned_dev_check___ {time.time()-t0:.1f}s, kept {parcel_dims.shape[0]} parcels\n")
-
+            
     # ————————— 3. District checks ————————— #
     t1 = time.time()
     # 1. Warn about parcels crossing multiple base zones
@@ -214,7 +214,6 @@ def zp_run_zoning_checks(
             .fillna("")  # None -> ""
             .apply(lambda s: "cross_base_district" if s == "" else s + ",cross_base_district")
         )
-        warnings.warn(f"{len(crossing)}/{len(parcel_dims)} parcels acrossed by zoning")
         # Record intermediate flag for detailed_check logic
         parcel_dims["check_cross_base"] = ~mask_dist_cross
     # 2. Warn about parcels not covered by any district
@@ -227,16 +226,15 @@ def zp_run_zoning_checks(
             .fillna("")  # None -> ""
             .apply(lambda s: "no_district" if s == "" else s + ",no_district")
         )
-        warnings.warn(f"{len(missing)}/{len(parcel_dims)} parcels not covered by zoning")
         # Add intermediate variable check_dist_cover for detailed_check logic
         parcel_dims["check_dist_cover"] = ~mask_dist_cover
 
     # Handle cross-base and no-district cases
-    df_cross = parcel_dims.loc[mask_dist_cross].copy()
-    mask_dist = mask_dist_cross | mask_dist_cover
-    df_dist = parcel_dims.loc[mask_dist]
-    maybe_dfs.append(df_dist)
-    parcel_dims = parcel_dims.loc[~mask_dist]
+    if not detailed_check:
+        mask_dist = mask_dist_cross | mask_dist_cover
+        df_dist = parcel_dims.loc[mask_dist]
+        maybe_dfs.append(df_dist)
+        parcel_dims = parcel_dims.loc[~mask_dist]
     if print_checkpoints:
         print(f"___cross_no_dist_check___ {time.time()-t1:.1f}s, kept {parcel_dims.shape[0]} parcels\n")
             
