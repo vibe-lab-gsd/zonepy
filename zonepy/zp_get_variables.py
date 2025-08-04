@@ -43,7 +43,7 @@ def zp_get_variables(bldg_data, parcel_data, district_data, zoning_data):
     fl_area = level_info_df['gross_fl_area'].sum()
     fl_area_first = level_info_df[level_info_df['level'] == 1]['gross_fl_area'].sum() if len(level_info_df[level_info_df['level'] == 1]) == 1 else 0
     fl_area_top = level_info_df[level_info_df['level'] == level_info_df['level'].max()]['gross_fl_area'].sum() if level_info_df['level'].max() > 1 else 0
-    floors = level_info_df['level'].max()
+    stories = level_info_df['level'].max()
     height_deck = bldg_json['bldg_info'].get('height_deck', bldg_json['bldg_info']['height_top'])
     height_eave = bldg_json['bldg_info'].get('height_eave', bldg_json['bldg_info']['height_top'])
     height_plate = bldg_json['bldg_info']['height_plate']
@@ -86,7 +86,7 @@ def zp_get_variables(bldg_data, parcel_data, district_data, zoning_data):
         'fl_area': [fl_area],
         'fl_area_first': [fl_area_first],
         'fl_area_top': [fl_area_top],
-        'floors': [floors],
+        'stories': [stories],
         'height_deck': [height_deck],
         'height_eave': [height_eave],
         'height_plate': [height_plate],
