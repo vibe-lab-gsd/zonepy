@@ -1,5 +1,6 @@
 import json
 import pandas as pd
+import warnings
 
 def zp_get_variables(bldg_data, parcel_data, district_data, zoning_data):
 
@@ -16,7 +17,14 @@ def zp_get_variables(bldg_data, parcel_data, district_data, zoning_data):
     else:
         raise ValueError("Improper input: zoning_data")
 
-    # Step 2: Load building data
+    # Step 1a: Append height catch-all at end (only if missing)
+    if 'height' in zoning_defs:
+        hd_list = zoning_defs['height']
+        if not any(isinstance(c.get('condition'), str) and c.get('condition').strip().upper() == 'TRUE' for c in hd_list):
+            hd_list.append({'condition': 'True', 'expression': 'height_top'})
+        zoning_defs['height'] = hd_list
+
+    # Step 3: Load building data
     if isinstance(bldg_data, str):
         try:
             with open(bldg_data, 'r') as f:
@@ -31,11 +39,11 @@ def zp_get_variables(bldg_data, parcel_data, district_data, zoning_data):
     if 'bldg_info' not in bldg_json or 'unit_info' not in bldg_json or 'level_info' not in bldg_json:
         raise ValueError("Improper format: json must contain bldg_info, unit_info, and level_info sections")
 
-    # Step 3: Create DataFrame for unit info and level info
+    # Step 4: Create DataFrame for unit info and level info
     unit_info_df = pd.DataFrame(bldg_json['unit_info'])
     level_info_df = pd.DataFrame(bldg_json['level_info'])
 
-    # Step 4: Extract and calculate building variables
+    # Step 5: Extract and calculate building variables
     bldg_depth = bldg_json['bldg_info']['depth']
     bldg_width = bldg_json['bldg_info']['width']
     footprint = bldg_depth * bldg_width  
@@ -49,6 +57,9 @@ def zp_get_variables(bldg_data, parcel_data, district_data, zoning_data):
     height_plate = bldg_json['bldg_info']['height_plate']
     height_top = bldg_json['bldg_info']['height_top']
     height_tower = bldg_json['bldg_info'].get('height_tower', 0)
+    height_parapet = bldg_json['bldg_info'].get('height_parapet', height_top)
+    roof_pitch     = bldg_json['bldg_info'].get('roof_pitch', 0)
+    sep_wall_length= bldg_json['bldg_info'].get('sep_wall_length', 0)
     lot_size = parcel_data['lot_area'].iloc[0]
     lot_depth = parcel_data['lot_depth'].iloc[0]
     lot_width = parcel_data['lot_width'].iloc[0]
@@ -78,7 +89,7 @@ def zp_get_variables(bldg_data, parcel_data, district_data, zoning_data):
     unit_density = total_units / lot_size
     far = fl_area / (lot_size * 43560)
 
-    # Step 5: Construct the resulting DataFrame
+    # Step 6: Construct the resulting DataFrame
     vars_df = pd.DataFrame({
         'bldg_depth': [bldg_depth],
         'bldg_width': [bldg_width],
@@ -92,6 +103,9 @@ def zp_get_variables(bldg_data, parcel_data, district_data, zoning_data):
         'height_plate': [height_plate],
         'height_top': [height_top],
         'height_tower': [height_tower],
+        'height_parapet':[height_parapet],
+        'roof_pitch':[roof_pitch],
+        'sep_wall_length': [sep_wall_length],
         'lot_size': [lot_size],
         'lot_depth': [lot_depth],
         'lot_width': [lot_width],
@@ -122,35 +136,67 @@ def zp_get_variables(bldg_data, parcel_data, district_data, zoning_data):
         'far': [far]
     })
 
-    # Step 6: Dynamically compute each zoning variable from zoning_defs and add to vars_df
+    # # Step 7: Dynamically compute each zoning variable from zoning_defs and add to vars_df
+    # for var_name, var_list in zoning_defs.items():
+    #     matched = False
+    #     for condition in var_list:
+    #         cond_raw = condition['condition']
+    #         # If the condition is a list of multiple sub-conditions, join them with '&';
+    #         # otherwise treat the single string as the full condition expression
+    #         if isinstance(cond_raw, list):
+    #             cond_str = " & ".join(cond_raw)
+    #         else:
+    #             cond_str = cond_raw
+
+    #         try:
+    #             # Evaluate the boolean expression
+    #             if eval(cond_str):
+    #                 # If the condition is True, evaluate the corresponding expression
+    #                 # to determine the variable’s value
+    #                 value = eval(condition['expression'])
+    #                 matched = True
+    #                 break  # Stop checking further var_list for this variable
+    #         except Exception:
+    #             # If parsing or evaluation fails, skip this condition and continue
+    #             continue
+
+    #     if not matched:
+    #         # If no condition matched for this variable, raise an error
+    #         raise ValueError(f"No conditions met for variable {var_name}")
+    #     # Assign the computed value into vars_df under the column named var_name
+    #     vars_df[var_name] = value
+
+    # return vars_df
+
+    # Step 7: Evaluate zoning definitions dynamically, mapping R 'TRUE' to Python True
     for var_name, var_list in zoning_defs.items():
         matched = False
         for condition in var_list:
             cond_raw = condition['condition']
-            # If the condition is a list of multiple sub-conditions, join them with '&';
-            # otherwise treat the single string as the full condition expression
-            if isinstance(cond_raw, list):
-                cond_str = " & ".join(cond_raw)
+            # normalize R-style 'TRUE' to Python True
+            if isinstance(cond_raw, str) and cond_raw.strip().upper() == 'TRUE':
+                cond_str = 'True'
+            elif isinstance(cond_raw, list):
+                parts = []
+                for c in cond_raw:
+                    if isinstance(c, str) and c.strip().upper() == 'TRUE':
+                        parts.append('True')
+                    else:
+                        parts.append(c)
+                cond_str = ' & '.join(parts)
             else:
                 cond_str = cond_raw
-
             try:
-                # Evaluate the boolean expression
                 if eval(cond_str):
-                    # If the condition is True, evaluate the corresponding expression
-                    # to determine the variable’s value
                     value = eval(condition['expression'])
                     matched = True
-                    break  # Stop checking further var_list for this variable
+                    break
             except Exception:
-                # If parsing or evaluation fails, skip this condition and continue
                 continue
-
         if not matched:
-            # If no condition matched for this variable, raise an error
-            raise ValueError(f"No conditions met for variable {var_name}")
-
-        # Assign the computed value into vars_df under the column named var_name
-        vars_df[var_name] = value
+            warnings.warn(f"No conditions met for variable {var_name}, recorded as 'not_defined'")
+            vars_df[var_name] = 'not_defined'
+        else:
+            vars_df[var_name] = value
 
     return vars_df
