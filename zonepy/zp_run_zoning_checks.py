@@ -243,35 +243,54 @@ def zp_run_zoning_checks(
     vars_map = {}
     req_map  = {}
     no_setback = set()
+
+    def safe_sum(x):
+        """
+        Safely sum a value that may be None, NaN, or a list/tuple containing None/NaN.
+        - None or NaN are treated as 0.
+        - Lists/tuples are filtered of None/NaN before summing.
+        """
+        # Treat None or NaN as 0
+        if x is None or (isinstance(x, float) and np.isnan(x)):
+            return 0
+        # If list or tuple, filter out None/NaN and sum
+        if isinstance(x, (list, tuple)):
+            return sum(i for i in x if i is not None and not (isinstance(i, float) and np.isnan(i)))
+        # Otherwise, return the numeric value directly
+        return x
+
     for idx in parcel_dims.index:
-        # Use double brackets to extract a DataFrame instead of a Series
-        parcel_data = parcel_dims.loc[[idx]]   
+        # Extract a one-row DataFrame (keeps column types) instead of a Series
+        parcel_data = parcel_dims.loc[[idx]]
         pid = parcel_data.at[idx, "parcel_id"]
-        # Find the corresponding district subset DataFrame
+        # Build list of zoning IDs (may be a single ID or a list)
         ids = (parcel_data.at[idx, "muni_base_id"]
             if isinstance(parcel_data.at[idx, "muni_base_id"], (list, tuple))
             else [parcel_data.at[idx, "muni_base_id"]])
+        # Subset zoning_all by those IDs
         dist_df = zoning_all[zoning_all["zoning_id"].isin(ids)]
-        # Skip if no district found
-        if dist_df.empty:
+        # Skip if there isn’t exactly one matching district
+        if dist_df.shape[0] != 1:
             continue
-        # Extract muni JSON definitions from the first row of dist_df
-        muni = int(dist_df.iloc[0]["muni_id"])
-        munijson = zoning_jsons[muni]["definitions"]
-        # Call zp_get_variables with correct types
+        # Load that municipality’s JSON definitions
+        muni_id = int(dist_df.iloc[0]["muni_id"])
+        munijson = zoning_jsons[muni_id]["definitions"]
+        # Compute variables and zoning requirements
         v = zp_get_variables(bldg_data, parcel_data, dist_df, munijson)
         z = zp_get_zoning_req(dist_df, bldg_data=None, parcel_data=None, zoning_data=None, vars=v)
         vars_map[pid] = v
         req_map[pid]  = z
-        # Record parcels with no setbacks
+        # Identify parcels with no setback requirements
         if isinstance(z, str):
+            # If z is an error string, treat as no setbacks
             no_setback.add(pid)
         else:
+            # Filter constraints containing “setback”
             sb = z[z["constraint_name"].str.contains("setback")]["min_value"]
-            if sb.isnull().all() or sb.apply(lambda x: sum(x if isinstance(x,(list,tuple)) else [x])).sum()==0:
+            # If all are NaN or their safe sum is zero, mark as no setback
+            if sb.isnull().all() or sb.apply(safe_sum).sum() == 0:
                 no_setback.add(pid)
-    if print_checkpoints:
-        print(f"___get_zoning_req___ {time.time()-t2:.1f}s\n")
+    print(f"___get_zoning_req___ {time.time()-t2:.1f}s\n")
 
     # ————————— 5. Initial checks (res_type, constraints, unit_size) ————————— #
     t3 = time.time()
