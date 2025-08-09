@@ -441,7 +441,15 @@ def zp_run_zoning_checks(
 
     # ————————— 9. Merge & output ————————— #
     # Concatenate all parcels removed to false_dfs plus those still in parcel_dims
-    final = pd.concat(false_dfs + [parcel_dims], ignore_index=True)
+    final = pd.concat(false_dfs + maybe_dfs + [parcel_dims], ignore_index=True)
+    # Immediately deduplicate after summarize() to avoid identical rows entering subsequent steps
+    final["_geom_wkb"] = final.geometry.apply(lambda g: g.wkb if g is not None else None)
+    final = final.drop_duplicates(
+        subset=[c for c in ["parcel_id","false_reasons","maybe_reasons","_geom_wkb"] if c in final.columns],
+        keep="first"
+    )
+    final = final.drop(columns=["_geom_wkb"])
+    final = final.reset_index(drop=True)
     
     # Compute allowed & reason columns
     def summarize(r):
