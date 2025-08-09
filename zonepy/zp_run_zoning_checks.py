@@ -421,16 +421,21 @@ def zp_run_zoning_checks(
             parcel_dims = parcel_dims[~mask]
         if print_checkpoints:
             print(f"___bldg_fit___ {time.time()-t5:.1f}s\n")
-
+            
     # ————————— 8. Overlay check ————————— #
     if "overlay" in checks and not overlays.empty:
         t6 = time.time()
-        o_parcels = set(overlays["parcel_id"])
-        mask = parcel_dims["parcel_id"].isin(o_parcels)
+        def has_overlay(val):
+            if isinstance(val, (list, tuple)):
+                return any(pd.notna(x) for x in val)
+            return pd.notna(val)
+        mask = parcel_dims["muni_overlay_id"].apply(has_overlay)
         parcel_dims.loc[mask, "maybe_reasons"] = (
             parcel_dims.loc[mask, "maybe_reasons"]
-            .fillna("") .apply(lambda s: "overlay" if s=="" else s+",overlay")
+            .fillna("")
+            .apply(lambda s: "overlay" if s == "" else s + ",overlay")
         )
+
         if print_checkpoints:
             print(f"___overlay_check___ {time.time()-t6:.1f}s\n")
 
