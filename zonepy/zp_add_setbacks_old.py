@@ -104,8 +104,6 @@ def zp_add_setbacks(parcel_gdf: gpd.GeoDataFrame,
             new_int = pmax_like(v_int, (v_int if isinstance(v_int,(list,tuple)) else [v_int]) + 
                                        (inc if isinstance(inc,(list,tuple)) else [inc]))
             pg.at[i0,'setback'] = new_int
-        # else:
-        #     warnings.warn("setback_side_sum cannot be calculated due to lack of parcel edges")
 
     # 7. setback_front_sum
     if 'setback_front_sum' in extra:
@@ -122,7 +120,5 @@ def zp_add_setbacks(parcel_gdf: gpd.GeoDataFrame,
             new_r = pmax_like(v_r, (v_r if isinstance(v_r,(list,tuple)) else [v_r]) +
                                      (inc if isinstance(inc,(list,tuple)) else [inc]))
             pg.at[r0,'setback'] = new_r
-        # else:
-        #     warnings.warn("setback_front_sum cannot be calculated due to missing front or rear edge")
 
     return pg

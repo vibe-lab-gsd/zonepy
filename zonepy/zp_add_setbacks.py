@@ -162,8 +162,6 @@ def zp_add_setbacks(parcel_gdf: gpd.GeoDataFrame,
             new_int = add_vec(v_int, side_setback_increase)
 
             pg.at[side_2_idx, 'setback'] = maybe_collapse_scalar(new_int)
-        else:
-            warnings.warn("setback_side_sum cannot be calculated due to lack of parcel side edges")
 
     # ---------- 7) setback_front_sum ----------
     if 'setback_front_sum' in extras:
@@ -182,7 +180,5 @@ def zp_add_setbacks(parcel_gdf: gpd.GeoDataFrame,
             new_rear = add_vec(v_rear, rear_setback_increase)
 
             pg.at[rear_idx, 'setback'] = maybe_collapse_scalar(new_rear)
-        else:
-            warnings.warn("setback_front_sum cannot be calculated due to missing front or rear edge")
 
     return pg
