@@ -1,29 +1,104 @@
 import warnings
+import numpy as np
 import pandas as pd
 import geopandas as gpd
-from itertools import zip_longest
 
 def zp_add_setbacks(parcel_gdf: gpd.GeoDataFrame,
                     district_data,
                     zoning_req):
     """
-    Fully equivalent to the R version zr_add_setbacks(), and supports
-    scalar/vector cases for the three rules: setback_dist_boundary,
-    setback_side_sum, setback_front_sum.
+    Python equivalent of zr_add_setbacks():
+    - Basic setbacks (front/int/ext/rear)
+    - setback_dist_boundary (boundary rule, pmax)
+    - setback_side_sum (sum of side setbacks)
+    - setback_front_sum (sum of front/rear setbacks)
+    Supports scalar/vector (list/tuple/ndarray) inputs and uses numpy
+    for element-wise operations and broadcasting.
     """
-    # 1. If zoning_req is a string, just add a column and return
+
+    # ---------- helpers ----------
+    def to_vec(x):
+        """Convert scalar / list / tuple / ndarray / None / NaN into a 1D float ndarray (can be empty)."""
+        if isinstance(x, (list, tuple, np.ndarray, pd.Series)):
+            vals = [v for v in x if v is not None and not (isinstance(v, float) and np.isnan(v))]
+            arr = np.asarray(vals, dtype=float)
+        else:
+            if x is None or (isinstance(x, float) and np.isnan(x)):
+                arr = np.array([], dtype=float)
+            else:
+                arr = np.array([x], dtype=float)
+        return arr
+
+    def pmax_vec(a, b):
+        """Equivalent to R's pmax: element-wise maximum, supports broadcasting."""
+        A = to_vec(a)
+        B = to_vec(b)
+        if A.size == 0 and B.size == 0:
+            return np.array([], dtype=float)
+        if A.size == 0:
+            A = np.zeros_like(B)
+        if B.size == 0:
+            B = np.zeros_like(A)
+        return np.maximum(A, B)
+
+    def add_vec(a, b):
+        """Element-wise addition with broadcasting."""
+        A = to_vec(a)
+        B = to_vec(b)
+        if A.size == 0 and B.size == 0:
+            return np.array([], dtype=float)
+        if A.size == 0:
+            A = np.zeros_like(B)
+        if B.size == 0:
+            B = np.zeros_like(A)
+        return A + B
+
+    def sub_vec(a, b):
+        """Element-wise subtraction with broadcasting."""
+        A = to_vec(a)
+        B = to_vec(b)
+        if A.size == 0 and B.size == 0:
+            return np.array([], dtype=float)
+        if A.size == 0:
+            A = np.zeros_like(B)
+        if B.size == 0:
+            B = np.zeros_like(A)
+        return A - B
+
+    def clamp_neg_to_zero(x):
+        """Replace negative values with zero (element-wise)."""
+        X = to_vec(x)
+        if X.size == 0:
+            return X
+        return np.where(X < 0, 0.0, X)
+
+    def maybe_collapse_scalar(arr):
+        """
+        Collapse to scalar if length is 1,
+        or if length is 2 and both elements are equal;
+        otherwise, return as ndarray.
+        """
+        if not isinstance(arr, np.ndarray):
+            arr = to_vec(arr)
+        if arr.size == 1:
+            return float(arr[0])
+        if arr.size == 2 and np.isfinite(arr).all() and np.isclose(arr[0], arr[1]):
+            return float(arr[0])
+        return arr
+
+    # ---------- 1) If zoning_req is a string: return immediately ----------
     if isinstance(zoning_req, str):
         out = parcel_gdf.copy()
         out['setback'] = None
         return out
 
-    # 2. Take only one row of district geometry
+    # ---------- 2) Extract district row ----------
     if isinstance(district_data, gpd.GeoDataFrame):
         district_row = district_data.iloc[0]
     else:
         district_row = district_data
 
-    # 3. Basic setback
+    # ---------- 3) Basic setbacks ----------
     name_key = {
         'front': 'setback_front',
         'interior side': 'setback_side_int',
@@ -41,88 +116,73 @@ def zp_add_setbacks(parcel_gdf: gpd.GeoDataFrame,
             setbacks.append(None)
             missing = True
         else:
-            match = zoning_req[zoning_req['constraint_name']==key]
+            match = zoning_req[zoning_req['constraint_name'] == key]
             setbacks.append(match.iloc[0]['min_value'] if not match.empty else None)
     if missing:
         warnings.warn("No side label. Setbacks not considered.")
     pg['setback'] = pd.Series(setbacks, index=pg.index, dtype=object)
 
-    # 4. Collect extra rules
-    extra = {}
-    for rule in ('setback_dist_boundary','setback_side_sum','setback_front_sum'):
-        if rule in zoning_req['constraint_name'].values:
-            extra[rule] = zoning_req.loc[
-                zoning_req['constraint_name']==rule, 'min_value'
-            ].iloc[0]
+    # ---------- 4) Collect extra rules ----------
+    extras = {}
+    for rule in ('setback_dist_boundary', 'setback_side_sum', 'setback_front_sum'):
+        m = zoning_req.loc[zoning_req['constraint_name'] == rule, 'min_value']
+        if not m.empty:
+            extras[rule] = m.iloc[0]
 
-    # Helper: mimic R's pmax + vector recycling + convergence
-    def pmax_like(a, b):
-        """
-        a, b can be scalar or vector (list/tuple/ndarray).
-        Do element-wise max, recycle the shorter one, and
-        if all elements are equal, return a scalar.
-        """
-        # Standardize to list
-        la = list(a) if isinstance(a, (list,tuple,pd.Series)) else [a]
-        lb = list(b) if isinstance(b, (list,tuple,pd.Series)) else [b]
-        # Use zip_longest to recycle the shorter one
-        fill_a = la[-1] if len(la)>=len(lb) else None
-        fill_b = lb[-1] if len(lb)>=len(la) else None
-        paired = zip_longest(la, lb,
-                             fillvalue=fill_a if len(la)>=len(lb) else fill_b)
-        result = [max(x,y) for x,y in paired]
-        return result[0] if all(r==result[0] for r in result) else result
-
-    # 5. setback_dist_boundary
-    if 'setback_dist_boundary' in extra:
-        db = extra['setback_dist_boundary']
-        # Create 5m buffer zone
+    # ---------- 5) setback_dist_boundary ----------
+    if 'setback_dist_boundary' in extras:
+        dist_boundary = extras['setback_dist_boundary']
+        # Equivalent to: st_cast -> boundary -> buffer(5)
         buf = district_row.geometry.boundary.buffer(5)
         pg['on_boundary'] = pg.geometry.within(buf)
 
-        # Only apply pmax to rows where on_boundary=True
-        mask = pg['on_boundary']
-        pg.loc[mask, 'setback'] = pg.loc[mask, 'setback'].apply(
-            lambda sb: None if sb is None else pmax_like(db, sb)
-        )
+        mask = pg['on_boundary'] == True
+        if mask.any():
+            def _apply_pmax(sb):
+                if sb is None:
+                    return None
+                return maybe_collapse_scalar(pmax_vec(dist_boundary, sb))
+            pg.loc[mask, 'setback'] = pg.loc[mask, 'setback'].apply(_apply_pmax)
 
-    # 6. setback_side_sum
-    if 'setback_side_sum' in extra:
-        ss = extra['setback_side_sum']
-        # Find a pair of interior / exterior
-        int_idx = pg.index[pg['side']=='interior side']
-        ext_idx = pg.index[pg['side']=='exterior side']
-        if int_idx.any() and ext_idx.any():
-            i0, e0 = int_idx[0], ext_idx[0]
-            v_int = pg.at[i0,'setback'] or 0
-            v_ext = pg.at[e0,'setback'] or 0
-            # R: diff = ss - (v_int+v_ext), keep only >0 part
-            diff = ss - (v_int + v_ext)
-            inc  = diff if isinstance(diff,(int,float)) and diff>0 else \
-                   ([d for d in diff if d>0] if isinstance(diff,(list,tuple)) else 0)
-            # Add inc to the second (interior side)
-            new_int = pmax_like(v_int, (v_int if isinstance(v_int,(list,tuple)) else [v_int]) + 
-                                       (inc if isinstance(inc,(list,tuple)) else [inc]))
-            pg.at[i0,'setback'] = new_int
-        # else:
-        #     warnings.warn("setback_side_sum cannot be calculated due to lack of parcel edges")
+    # ---------- 6) setback_side_sum ----------
+    if 'setback_side_sum' in extras:
+        side_sum = extras['setback_side_sum']
+        int_idx = pg.index[pg['side'] == 'interior side']
+        ext_idx = pg.index[pg['side'] == 'exterior side']
+        if len(int_idx) > 0 and len(ext_idx) > 0:
+            # In R, exterior side is prioritized as side_1
+            side_1_idx = ext_idx[0]
+            side_2_idx = int_idx[0]
 
-    # 7. setback_front_sum
-    if 'setback_front_sum' in extra:
-        fs = extra['setback_front_sum']
-        f_idx = pg.index[pg['side']=='front']
-        r_idx = pg.index[pg['side']=='rear']
-        if f_idx.any() and r_idx.any():
-            f0, r0 = f_idx[0], r_idx[0]
-            v_f = pg.at[f0,'setback'] or 0
-            v_r = pg.at[r0,'setback'] or 0
-            diff = fs - (v_f + v_r)
-            inc  = diff if isinstance(diff,(int,float)) and diff>0 else \
-                   ([d for d in diff if d>0] if isinstance(diff,(list,tuple)) else 0)
-            new_r = pmax_like(v_r, (v_r if isinstance(v_r,(list,tuple)) else [v_r]) +
-                                     (inc if isinstance(inc,(list,tuple)) else [inc]))
-            pg.at[r0,'setback'] = new_r
-        # else:
-        #     warnings.warn("setback_front_sum cannot be calculated due to missing front or rear edge")
+            v_ext = pg.at[side_1_idx, 'setback']  # side_1
+            v_int = pg.at[side_2_idx, 'setback']  # side_2
+
+            summed_sides_check = sub_vec(side_sum, add_vec(v_ext, v_int))
+            side_setback_increase = clamp_neg_to_zero(summed_sides_check)
+            new_int = add_vec(v_int, side_setback_increase)
+
+            pg.at[side_2_idx, 'setback'] = maybe_collapse_scalar(new_int)
+        else:
+            warnings.warn("setback_side_sum cannot be calculated due to lack of parcel side edges")
+
+    # ---------- 7) setback_front_sum ----------
+    if 'setback_front_sum' in extras:
+        front_sum = extras['setback_front_sum']
+        f_idx = pg.index[pg['side'] == 'front']
+        r_idx = pg.index[pg['side'] == 'rear']
+        if len(f_idx) > 0 and len(r_idx) > 0:
+            front_idx = f_idx[0]
+            rear_idx  = r_idx[0]
+
+            v_front = pg.at[front_idx, 'setback']
+            v_rear  = pg.at[rear_idx,  'setback']
+
+            summed_front_check   = sub_vec(front_sum, add_vec(v_front, v_rear))
+            rear_setback_increase = clamp_neg_to_zero(summed_front_check)
+            new_rear = add_vec(v_rear, rear_setback_increase)
+
+            pg.at[rear_idx, 'setback'] = maybe_collapse_scalar(new_rear)
+        else:
+            warnings.warn("setback_front_sum cannot be calculated due to missing front or rear edge")
 
     return pg
