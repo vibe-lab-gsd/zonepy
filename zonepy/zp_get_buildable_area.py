@@ -27,12 +27,28 @@ def zp_get_buildable_area(parcel_with_setbacks: gpd.GeoDataFrame) -> gpd.GeoData
     def get_min(sb):
         if sb is None:
             return None
-        return min(sb) if isinstance(sb, (list, tuple)) else sb
+        if isinstance(sb, (list, tuple, np.ndarray, pd.Series)):
+            try:
+                return float(np.nanmin(sb))
+            except Exception:
+                return None
+        try:
+            return float(sb)
+        except Exception:
+            return None
 
     def get_max(sb):
         if sb is None:
             return None
-        return max(sb) if isinstance(sb, (list, tuple)) else sb
+        if isinstance(sb, (list, tuple, np.ndarray, pd.Series)):
+            try:
+                return float(np.nanmax(sb))
+            except Exception:
+                return None
+        try:
+            return float(sb)
+        except Exception:
+            return None
 
     df = parcel_with_setbacks.copy()
     df['min_setback'] = df['setback'].apply(get_min)
@@ -52,11 +68,11 @@ def zp_get_buildable_area(parcel_with_setbacks: gpd.GeoDataFrame) -> gpd.GeoData
         )
 
     # 4. Replace NA with 0.1 ft, then convert feet to meters
-    df['min_setback'] = df['min_setback'].fillna(0.1) * 0.3048
-    df['max_setback'] = df['max_setback'].fillna(0.1) * 0.3048
+    df['min_setback'] = pd.to_numeric(df['min_setback'], errors='coerce').fillna(0.1) * 0.3048
+    df['max_setback'] = pd.to_numeric(df['max_setback'], errors='coerce').fillna(0.1) * 0.3048
 
     # 5. Determine if every edge uses the same setback (single-case)
-    single_case = (df['min_setback'] == df['max_setback']).all()
+    single_case = (df['min_setback'].values == df['max_setback'].values).all()
 
     # Helper: when result is a MultiPolygon, pick the polygon with the most vertices
     def pick_by_vertices(geom):
@@ -106,3 +122,4 @@ def zp_get_buildable_area(parcel_with_setbacks: gpd.GeoDataFrame) -> gpd.GeoData
         geometry='buildable_geometry_strict',
         crs=df.crs
     )
+
