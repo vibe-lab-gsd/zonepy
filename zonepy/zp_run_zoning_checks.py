@@ -302,7 +302,8 @@ def zp_run_zoning_checks(
             if isinstance(parcel_data.at[idx, "muni_base_id"], (list, tuple))
             else [parcel_data.at[idx, "muni_base_id"]])
         dist_df = zoning_all[zoning_all["zoning_id"].isin(ids)]
-        if dist_df.empty:
+        # Skip if there isn’t exactly one matching district
+        if dist_df.shape[0] != 1:
             continue
         v   = vars_map[pid]
         z   = req_map[pid]
@@ -400,7 +401,7 @@ def zp_run_zoning_checks(
             if not isinstance(base_ids, (list, tuple)):
                 base_ids = [base_ids]
             dist_df = zoning_all[zoning_all["zoning_id"].isin(base_ids)]
-            if dist_df.empty:
+            if dist_df.shape[0] != 1:
                 continue
             v   = vars_map[pid]
             z   = req_map[pid]
@@ -473,7 +474,7 @@ def zp_run_zoning_checks(
         drop_cols = [
             "false_reasons","maybe_reasons",
             "lot_width","lot_depth","lot_area","lot_type",
-            "zoning_id","pd_id","overlay_id"
+             "muni_base_id","muni_pd_id","muni_overlay_id"
         ]
         keep = [c for c in final.columns if c not in drop_cols]
         out = final[keep].copy()
