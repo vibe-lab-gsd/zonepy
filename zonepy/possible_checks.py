@@ -14,7 +14,7 @@ possible_checks = [
     'lot_cov_bldg',
     'lot_size',
     'parking_enclosed',
-    'stories',
+    'floors',
     'unit_0bed',
     'unit_1bed',
     'unit_2bed',
