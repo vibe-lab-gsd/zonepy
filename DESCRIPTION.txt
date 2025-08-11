@@ -5,10 +5,10 @@ Version: 0.5.0
 Authors@R: c(
     person("Kamryn", "Mansfield", email = "mansfieldkamryn@gmail.com", role = c("ctb","aut"), comment = c(ORCID = "0009-0003-5466-0821")),
     person("Carole", "Voulgaris", email = "cvoulgaris@gsd.harvard.edu", role = c("aut", "cre","ctb"), comment = c(ORCID = "0000-0003-0556-924X")),
-    person("Houpu", "Li", role = c("ctb","aut"))
+    person("Houpu", "Li", email = "iamhoupuli@gmail.com", role = c("ctb","aut"),comment = c(ORCID = "0009-0008-2584-4505"))
     )
-Maintainer: Kamryn Mansfield <mansfieldkamryn@gmail.com>
-Description: The zoneR package was built to analyze housing capacity
+Maintainer: Houpu Li <iamhoupuli@gmail.com>
+Description: The zonepy package was built to analyze housing capacity
     under existing zoning laws. It is designed to work with OZFS files (*.bldg, 
     *.parcel, *.zoning).
 License: MIT + file LICENSE
@@ -16,15 +16,21 @@ Encoding: UTF-8
 LazyData: true
 LazyDataCompression: xz
 Imports: 
-    dplyr,
-    rjson,
-    sf,
-    terra
+    geopandas,
+    pandas,
+    numpy,
+    shapely,
+    matplotlib,
+    os,
+    json,
+    glob,
+    joblib,
+    tqdm
 RoxygenNote: 7.3.1
 Roxygen: list(markdown = TRUE)
 Depends: 
-    R (>= 2.10)
-URL: https://github.com/vibe-lab-gsd/zoneR, https://vibe-lab-gsd.github.io/zoneR/
+    Python (>= 2.10)
+URL: https://github.com/vibe-lab-gsd/zonepy, https://vibe-lab-gsd.github.io/zonepy/
 Suggests: 
     testthat (>= 3.0.0)
 Config/testthat/edition: 3
