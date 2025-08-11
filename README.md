@@ -131,7 +131,7 @@ zoning_checks
 ```
 
 The graph below is a visualization of the results.
-<img src="man/figures/README_zoning_checks_1.png" width="100%" />
+<img src="figures/README_zoning_checks_1.png" width="100%" />
 
 It appears the map of this duplex allowed situation in the Paradise
 parcels. To look further into the reasons, we can specify the checks we
@@ -153,7 +153,7 @@ zoning_checks == zp_run_zoning_checks(bldg_file = bldg_path,
 Now we can see that only a few of the parcels are in a district that
 allows buildings with two units. It makes sense why there were only a
 few parcels in the previous check that might have allowed the building.
-<img src="man/figures/README_zoning_checks_2.png" width="100%" />
+<img src="figures/README_zoning_checks_2.png" width="100%" />
 
 Here are a few other constraint checks to visualize.
 
@@ -168,7 +168,7 @@ zoning_checks <- zp_run_zoning_checks(bldg_file = bldg_path,
 #> total runtime: 1.2 sec
 ```
 
-<img src="man/figures/README_zoning_checks_3.png" width="100%" />
+<img src="figures/README_zoning_checks_3.png" width="100%" />
 
 Building Fit Check
 
@@ -181,7 +181,7 @@ zoning_checks <- zp_run_zoning_checks(bldg_file = bldg_path,
 #> total runtime: 13.1 sec
 ```
 
-<img src="man/figures/README_zoning_checks_4.png" width="100%" />
+<img src="figures/README_zoning_checks_4.png" width="100%" />
 
 Many of the “MAYBE” values attached to the bldg_fit constraint represent
 parcels that didn’t have labeled sides. Without labeled sides, a proper
@@ -255,8 +255,7 @@ And then we can summarize a table to have a look at check situation in each cons
 |total_units       |   421|      0|	     0|	   100.0%|	     0.0%|	     0.0%|
 |unit_size_avg     |   421|      0|	     0|	   100.0%|	     0.0%|	     0.0%|
 
-It appears the res_type constraint is the most restrictive and the
-unit_size constraint is the least restrictive for the given building.
+It appears the res_type constraint is the most restrictive for the given building.
 
 ## Inside the zp_run_zoning_checks()
 
