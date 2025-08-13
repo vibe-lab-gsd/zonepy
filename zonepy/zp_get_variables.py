@@ -51,7 +51,7 @@ def zp_get_variables(bldg_data, parcel_data, district_data, zoning_data):
     fl_area = level_info_df['gross_fl_area'].sum()
     fl_area_first = level_info_df[level_info_df['level'] == 1]['gross_fl_area'].sum() if len(level_info_df[level_info_df['level'] == 1]) == 1 else 0
     fl_area_top = level_info_df[level_info_df['level'] == level_info_df['level'].max()]['gross_fl_area'].sum() if level_info_df['level'].max() > 1 else 0
-    floors = level_info_df['level'].max()
+    stories = level_info_df['level'].max()
     height_deck = bldg_json['bldg_info'].get('height_deck', bldg_json['bldg_info']['height_top'])
     height_eave = bldg_json['bldg_info'].get('height_eave', bldg_json['bldg_info']['height_top'])
     height_plate = bldg_json['bldg_info']['height_plate']
@@ -60,7 +60,7 @@ def zp_get_variables(bldg_data, parcel_data, district_data, zoning_data):
     height_parapet = bldg_json['bldg_info'].get('height_parapet', height_top)
     roof_pitch     = bldg_json['bldg_info'].get('roof_pitch', 0)
     sep_wall_length= bldg_json['bldg_info'].get('sep_wall_length', 0)
-    lot_size = parcel_data['lot_area'].iloc[0]
+    lot_area = parcel_data['lot_area'].iloc[0]
     lot_depth = parcel_data['lot_depth'].iloc[0]
     lot_width = parcel_data['lot_width'].iloc[0]
     lot_type = parcel_data['lot_type'].iloc[0]
@@ -85,9 +85,9 @@ def zp_get_variables(bldg_data, parcel_data, district_data, zoning_data):
     unit_pct_3bed = units_3bed / total_units 
     unit_pct_4bed = units_4bed / total_units
     unit_size_avg = float(unit_info_df['fl_area'].mean())
-    lot_cov_bldg = (footprint / (lot_size * 43560)) * 100
-    unit_density = total_units / lot_size
-    far = fl_area / (lot_size * 43560)
+    lot_cov_bldg = (footprint / (lot_area * 43560)) * 100
+    unit_density = total_units / lot_area
+    far = fl_area / (lot_area * 43560)
 
     # Step 6: Construct the resulting DataFrame
     vars_df = pd.DataFrame({
@@ -97,7 +97,7 @@ def zp_get_variables(bldg_data, parcel_data, district_data, zoning_data):
         'fl_area': [fl_area],
         'fl_area_first': [fl_area_first],
         'fl_area_top': [fl_area_top],
-        'floors': [floors],
+        'stories': [stories],
         'height_deck': [height_deck],
         'height_eave': [height_eave],
         'height_plate': [height_plate],
@@ -106,7 +106,7 @@ def zp_get_variables(bldg_data, parcel_data, district_data, zoning_data):
         'height_parapet':[height_parapet],
         'roof_pitch':[roof_pitch],
         'sep_wall_length': [sep_wall_length],
-        'lot_size': [lot_size],
+        'lot_area': [lot_area],
         'lot_depth': [lot_depth],
         'lot_width': [lot_width],
         'lot_type': [lot_type],

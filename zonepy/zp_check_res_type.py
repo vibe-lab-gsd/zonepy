@@ -13,9 +13,9 @@ def zp_check_res_type(vars, district_data):
     allowed = district_data.iloc[0].get("res_types_allowed", None)
 
     if allowed is None:
-        return True
+        return False
     if isinstance(allowed, float) and np.isnan(allowed):
-        return True
+        return False
     if isinstance(allowed, (list, tuple)) and len(allowed) == 0:
         return True
 
