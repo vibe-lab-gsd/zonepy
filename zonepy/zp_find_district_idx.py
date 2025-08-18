@@ -29,7 +29,7 @@ def zp_find_district_idx(tidyparcel, tidyzoning):
     # Create the DataFrame directly with required columns
     results_df = pd.DataFrame({
         "parcel_id": joined["parcel_id"],
-        "zoning_id": joined["index_right"]
+        "zoning_id": joined["zoning_id"]
     })
 
     return results_df

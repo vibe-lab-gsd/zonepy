@@ -137,6 +137,7 @@ def zp_run_zoning_checks(
     ov_idx = zp_find_district_idx(parcel_dims, overlays).rename(columns={"zoning_id":"muni_overlay_id"})
     parcel_dims = parcel_dims.merge(pd_idx[["parcel_id","muni_pd_id"]], on='parcel_id', how="left")
     parcel_dims = parcel_dims.merge(ov_idx[["parcel_id","muni_overlay_id"]], on='parcel_id', how="left")
+    parcel_dims = parcel_dims.drop_duplicates(keep='first').reset_index(drop=True)
 
     # 9. Add dist_abbr and muni_name for all zone IDs
     dist_abbr_map = zoning_all.set_index("zoning_id")["dist_abbr"].to_dict()

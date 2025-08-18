@@ -33,11 +33,11 @@ def zp_read_pcl(path, dist):
 
     # 3. Compute district index and merge results
     find_district_idx_results = zp_find_district_idx(parcel_gdf, dist)
-    parcel_gdf = parcel_gdf.merge(find_district_idx_results, left_index=True, right_index=True, how='left')
+    parcel_gdf = parcel_gdf.merge(find_district_idx_results[['zoning_id']], left_index=True, right_index=True, how='left')
 
-    # 4. Rename or drop extra columns (if find_district_idx returns parcel_id_x / parcel_id_y)
-    if 'parcel_id_x' in parcel_gdf.columns and 'parcel_id_y' in parcel_gdf.columns:
-        parcel_gdf = parcel_gdf.rename(columns={'parcel_id_x': 'parcel_id'})
-        parcel_gdf = parcel_gdf.drop(columns=['parcel_id_y'])
+    # # 4. Rename or drop extra columns (if find_district_idx returns parcel_id_x / parcel_id_y)
+    # if 'parcel_id_x' in parcel_gdf.columns and 'parcel_id_y' in parcel_gdf.columns:
+    #     parcel_gdf = parcel_gdf.rename(columns={'parcel_id_x': 'parcel_id'})
+    #     parcel_gdf = parcel_gdf.drop(columns=['parcel_id_y'])
 
     return parcel_gdf
