@@ -206,19 +206,7 @@ def zp_run_zoning_checks(
             
     # ————————— 3. District checks ————————— #
     t1 = time.time()
-    # 1. Warn about parcels crossing multiple base zones
-    mask_dist_cross = parcel_dims["muni_base_id"].apply(lambda x: isinstance(x, (list, tuple)) and len(x) > 1)
-    crossing = parcel_dims.loc[mask_dist_cross, "parcel_id"]
-    if not crossing.empty:
-        # Append 'cross_base_district' to maybe_reasons
-        parcel_dims.loc[mask_dist_cross, "maybe_reasons"] = (
-            parcel_dims.loc[mask_dist_cross, "maybe_reasons"]
-            .fillna("")  # None -> ""
-            .apply(lambda s: "cross_base_district" if s == "" else s + ",cross_base_district")
-        )
-        # Record intermediate flag for detailed_check logic
-        parcel_dims["check_cross_base"] = ~mask_dist_cross
-    # 2. Warn about parcels not covered by any district
+    # 1. Warn about parcels not covered by any district
     mask_dist_cover = (parcel_dims["muni_base_id"].isna() & parcel_dims["muni_pd_id"].isna() & parcel_dims["muni_overlay_id"].isna())
     missing = parcel_dims.loc[mask_dist_cover, "parcel_id"]
     if not missing.empty:
@@ -233,10 +221,9 @@ def zp_run_zoning_checks(
 
     # Handle cross-base and no-district cases
     if not detailed_check:
-        mask_dist = mask_dist_cross | mask_dist_cover
-        df_dist = parcel_dims.loc[mask_dist]
+        df_dist = parcel_dims.loc[mask_dist_cover]
         maybe_dfs.append(df_dist)
-        parcel_dims = parcel_dims.loc[~mask_dist]
+        parcel_dims = parcel_dims.loc[~mask_dist_cover]
     if print_checkpoints:
         print(f"___cross_no_dist_check___ {time.time()-t1:.1f}s, kept {parcel_dims.shape[0]} parcels\n")
             
@@ -466,11 +453,12 @@ def zp_run_zoning_checks(
         final.apply(summarize, axis=1).tolist(),
         index=final.index
     )
-
+    final["is_duplicate"] = final.duplicated(subset=["parcel_id"], keep=False)
+    
     # Select output columns based on detailed_check
     if not detailed_check:
         out = final[[
-            "parcel_id","muni_name","dist_abbr","allowed","reason","geometry"
+            "parcel_id","muni_name","dist_abbr","allowed","reason","geometry","is_duplicate"
         ]].copy()
     else:
         drop_cols = [
@@ -480,26 +468,6 @@ def zp_run_zoning_checks(
         ]
         keep = [c for c in final.columns if c not in drop_cols]
         out = final[keep].copy()
-
-    # Handle duplicate parcel_id cases (overlapping zones)
-    dups = out["parcel_id"][out["parcel_id"].duplicated()].unique()
-    if len(dups)>0:
-        merged = []
-        for pid in dups:
-            sub = out[out["parcel_id"]==pid]
-            vals = sub["allowed"].tolist()
-            if all(v==True for v in vals):
-                v = True
-            elif all(v==False for v in vals):
-                v = False
-            else:
-                v = "MAYBE"
-            reasons = " ---||--- ".join(sub["reason"].tolist())
-            row = sub.iloc[0].copy()
-            row["allowed"] = v
-            row["reason"]  = reasons
-            merged.append(row)
-        out = out[~out["parcel_id"].isin(dups)].append(merged, ignore_index=True)
 
     # Save to GeoJSON if requested
     if save_to:
