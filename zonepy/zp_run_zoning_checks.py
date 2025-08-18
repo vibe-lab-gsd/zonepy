@@ -225,7 +225,7 @@ def zp_run_zoning_checks(
         maybe_dfs.append(df_dist)
         parcel_dims = parcel_dims.loc[~mask_dist_cover]
     if print_checkpoints:
-        print(f"___cross_no_dist_check___ {time.time()-t1:.1f}s, kept {parcel_dims.shape[0]} parcels\n")
+        print(f"___no_dist_check___ {time.time()-t1:.1f}s, kept {parcel_dims.shape[0]} parcels\n")
             
     # ————————— 4. Variables & requirements ————————— #
     t2 = time.time()
