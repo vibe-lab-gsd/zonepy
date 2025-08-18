@@ -131,7 +131,8 @@ def zp_run_zoning_checks(
     # 7. Generate parcel_dims with centroid and dimensions, rename zoning_id to muni_base_id
     parcel_dims = zp_get_parcel_dim(parcels_sf)
     parcel_dims = parcel_dims.rename(columns={"zoning_id":"muni_base_id"})
-    
+    parcel_dims = parcel_dims.drop_duplicates(keep='first').reset_index(drop=True)
+
     # 8. Add muni_pd_id and muni_overlay_id
     pd_idx = zp_find_district_idx(parcel_dims, pd_districts).rename(columns={"zoning_id":"muni_pd_id"})
     ov_idx = zp_find_district_idx(parcel_dims, overlays).rename(columns={"zoning_id":"muni_overlay_id"})
