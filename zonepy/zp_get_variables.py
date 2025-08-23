@@ -136,38 +136,6 @@ def zp_get_variables(bldg_data, parcel_data, district_data, zoning_data):
         'far': [far]
     })
 
-    # # Step 7: Dynamically compute each zoning variable from zoning_defs and add to vars_df
-    # for var_name, var_list in zoning_defs.items():
-    #     matched = False
-    #     for condition in var_list:
-    #         cond_raw = condition['condition']
-    #         # If the condition is a list of multiple sub-conditions, join them with '&';
-    #         # otherwise treat the single string as the full condition expression
-    #         if isinstance(cond_raw, list):
-    #             cond_str = " & ".join(cond_raw)
-    #         else:
-    #             cond_str = cond_raw
-
-    #         try:
-    #             # Evaluate the boolean expression
-    #             if eval(cond_str):
-    #                 # If the condition is True, evaluate the corresponding expression
-    #                 # to determine the variable’s value
-    #                 value = eval(condition['expression'])
-    #                 matched = True
-    #                 break  # Stop checking further var_list for this variable
-    #         except Exception:
-    #             # If parsing or evaluation fails, skip this condition and continue
-    #             continue
-
-    #     if not matched:
-    #         # If no condition matched for this variable, raise an error
-    #         raise ValueError(f"No conditions met for variable {var_name}")
-    #     # Assign the computed value into vars_df under the column named var_name
-    #     vars_df[var_name] = value
-
-    # return vars_df
-
     # Step 7: Evaluate zoning definitions dynamically, mapping R 'TRUE' to Python True
     for var_name, var_list in zoning_defs.items():
         matched = False
