@@ -117,37 +117,62 @@ def zp_run_zoning_checks(
     
     # 3. Create unique zoning_id by combining muni_id and original zoning_id
     zoning_all['zoning_id'] = (zoning_all['muni_id'].astype(int).astype(str) + '_' + zoning_all['zoning_id'].astype(int).astype(str))
-
+    
     # 4. Separate into overlays, planned_dev districts, and base zones
-    overlays     = zoning_all[zoning_all["overlay"] == True]
-    overlays_list = overlays['zoning_id'].tolist()
-    pd_districts = zoning_all[zoning_all["planned_dev"] == True]
-    pd_list = pd_districts['zoning_id'].tolist()
-    pd_overlay = zoning_all[(zoning_all["overlay"] == True) & (zoning_all["planned_dev"]== True)]
-    pd_overlay_list = pd_overlay['zoning_id'].tolist()
-    base_zones   = zoning_all[zoning_all["overlay"] == False]
-    base_list = base_zones['zoning_id'].tolist()
+    overlays = zoning_all[zoning_all["overlay"]   == True]
+    pd_districts = zoning_all[zoning_all["planned_dev"]== True]
+    base_zones  = zoning_all[(zoning_all["overlay"]   == False) & (zoning_all["planned_dev"]== False)]
 
     # 5. Read parcels and assign base zoning IDs
-    parcel_list = [ zp_read_pcl(p, zoning_all) for p in parcel_files ]
+    parcel_list = [ zp_read_pcl(p, base_zones) for p in parcel_files ]
     parcels_sf = pd.concat(parcel_list, ignore_index=True)
     # 6. Generate parcel_geo with 'side' labels
     parcel_geo  = zp_get_parcel_geo(parcels_sf)
     # 7. Generate parcel_dims with centroid and dimensions, rename zoning_id to muni_base_id
     parcel_dims = zp_get_parcel_dim(parcels_sf)
-    # 8. Add parcel attribute
-    parcel_dims['is_overlay'] = parcel_dims['zoning_id'].isin(overlays_list)
-    parcel_dims['is_pd'] = parcel_dims['zoning_id'].isin(pd_list)
-    parcel_dims['is_pd_overlay'] = parcel_dims['zoning_id'].isin(pd_overlay_list)
-    parcel_dims['is_base'] = parcel_dims['zoning_id'].isin(base_list)
+    parcel_dims = parcel_dims.rename(columns={"zoning_id":"muni_base_id"})
     parcel_dims = parcel_dims.drop_duplicates(keep='first').reset_index(drop=True)
-    
+
+    # 8. Add muni_pd_id and muni_overlay_id
+    pd_idx = zp_find_district_idx(parcel_dims, pd_districts).rename(columns={"zoning_id":"muni_pd_id"})
+    ov_idx = zp_find_district_idx(parcel_dims, overlays).rename(columns={"zoning_id":"muni_overlay_id"})
+    parcel_dims = parcel_dims.merge(pd_idx[["parcel_id","muni_pd_id"]], on='parcel_id', how="left")
+    parcel_dims = parcel_dims.merge(ov_idx[["parcel_id","muni_overlay_id"]], on='parcel_id', how="left")
+    parcel_dims = parcel_dims.drop_duplicates(keep='first').reset_index(drop=True)
+
     # 9. Add dist_abbr and muni_name for all zone IDs
     dist_abbr_map = zoning_all.set_index("zoning_id")["dist_abbr"].to_dict()
     muni_name_map = zoning_all.set_index("zoning_id")["muni_name"].to_dict()
+        
+    def collect_all(ids, mapping):
+        vals = []
+        def handle_one(zid):
+            if pd.isna(zid):
+                return
+            v = mapping.get(zid)
+            if isinstance(v, (list, tuple)):
+                vals.extend(v)
+            elif v is not None:
+                vals.append(v)
+        for z_id in ids:
+            if isinstance(z_id, (list, tuple)):
+                for sub_id in z_id:
+                    handle_one(sub_id)
+            else:
+                handle_one(z_id)
+        seen = set()
+        uniq = []
+        for v in vals:
+            if v not in seen:
+                seen.add(v)
+                uniq.append(v)
+        return uniq
 
-    parcel_dims["dist_abbr"] = parcel_dims["zoning_id"].map(dist_abbr_map)
-    parcel_dims["muni_name"] = parcel_dims["zoning_id"].map(muni_name_map)
+    parcel_dims["all_zone_ids"] = parcel_dims[[
+        "muni_base_id","muni_pd_id","muni_overlay_id"
+    ]].values.tolist()
+    parcel_dims["dist_abbr"] = parcel_dims["all_zone_ids"].apply(lambda ids: collect_all(ids, dist_abbr_map))
+    parcel_dims["muni_name"] = parcel_dims["all_zone_ids"].apply(lambda ids: collect_all(ids, muni_name_map)) 
     
     # 10. Initialize false_reasons and maybe_reasons columns
     parcel_dims["false_reasons"] = None
@@ -158,35 +183,31 @@ def zp_run_zoning_checks(
     if print_checkpoints:
         elapsed = time.time() - start_time
         print(f"___data_prep___ {elapsed:.1f}s\n")
-        
+
     # ————————— 2. Planned Development check ————————— #
     t0 = time.time()
     if not pd_districts.empty:
-        # Two masks: PD with overlay first, then standard PD
-        mask_pd_overlay = (parcel_dims["is_pd_overlay"] == True)
-        mask_pd_dist    = (parcel_dims["is_pd"] == True) & ~mask_pd_overlay
-        # Write FALSE reason
-        def _append_reason(df, col, mask, tag):
-            cur = df.loc[mask, col].fillna("")
-            df.loc[mask, col] = np.where(cur == "", tag, cur + "," + tag)
-        _append_reason(parcel_dims, "false_reasons", mask_pd_overlay, "PD_overlay")
-        _append_reason(parcel_dims, "false_reasons", mask_pd_dist,    "PD_dist")
-        # Whether it passes the PD check (R: check_pd)
-        parcel_dims["check_pd"] = ~(mask_pd_overlay | mask_pd_dist)
-        # If not detailed_check: drop parcels that are FALSE in the PD stage
+        # Identify parcels in planned development districts via muni_pd_id
+        pd_parcels = pd_idx["parcel_id"][pd_idx["muni_pd_id"].notna()]
+        # Mark these parcels as FALSE and record the reason
+        mask_pd = parcel_dims["parcel_id"].isin(pd_parcels)
+        parcel_dims.loc[mask_pd, "false_reasons"] = (
+            parcel_dims.loc[mask_pd, "false_reasons"]
+            .fillna("") .apply(lambda s: "PD_dist" if s=="" else s+",PD_dist")
+        )
+        # Add intermediate variable check_pd for detailed_check logic
+        parcel_dims["check_pd"] = ~mask_pd
         if not detailed_check:
-            pd_false = parcel_dims.loc[~parcel_dims["check_pd"]]
-            false_dfs.append(pd_false)
-            parcel_dims = parcel_dims.loc[parcel_dims["check_pd"]].copy()
-    else:
-        parcel_dims["check_pd"] = True
-    if print_checkpoints:
-        print(f"___planned_dev_check___ {time.time()-t0:.1f}s, kept {parcel_dims.shape[0]} parcels\n")
-        
+            df0 = parcel_dims[ mask_pd ]
+            false_dfs.append(df0)
+            parcel_dims = parcel_dims[~mask_pd]
+        if print_checkpoints:
+            print(f"___planned_dev_check___ {time.time()-t0:.1f}s, kept {parcel_dims.shape[0]} parcels\n")
+            
     # ————————— 3. District checks ————————— #
     t1 = time.time()
     # 1. Warn about parcels not covered by any district
-    mask_dist_cover = parcel_dims["zoning_id"].isna()
+    mask_dist_cover = (parcel_dims["muni_base_id"].isna() & parcel_dims["muni_pd_id"].isna() & parcel_dims["muni_overlay_id"].isna())
     missing = parcel_dims.loc[mask_dist_cover, "parcel_id"]
     if not missing.empty:
         # Append 'no_district' to maybe_reasons
@@ -197,13 +218,12 @@ def zp_run_zoning_checks(
         )
         # Add intermediate variable check_dist_cover for detailed_check logic
         parcel_dims["check_dist_cover"] = ~mask_dist_cover
-        # Handle cross-base and no-district cases
-        if not detailed_check:
-            df_dist = parcel_dims.loc[mask_dist_cover]
-            maybe_dfs.append(df_dist)
-            parcel_dims = parcel_dims.loc[~mask_dist_cover]
-    else:
-        parcel_dims["check_dist_cover"] = True
+
+    # Handle cross-base and no-district cases
+    if not detailed_check:
+        df_dist = parcel_dims.loc[mask_dist_cover]
+        maybe_dfs.append(df_dist)
+        parcel_dims = parcel_dims.loc[~mask_dist_cover]
     if print_checkpoints:
         print(f"___no_dist_check___ {time.time()-t1:.1f}s, kept {parcel_dims.shape[0]} parcels\n")
             
@@ -233,9 +253,9 @@ def zp_run_zoning_checks(
         parcel_data = parcel_dims.loc[[idx]]
         pid = parcel_data.at[idx, "parcel_id"]
         # Build list of zoning IDs (may be a single ID or a list)
-        ids = (parcel_data.at[idx, "zoning_id"]
-            if isinstance(parcel_data.at[idx, "zoning_id"], (list, tuple))
-            else [parcel_data.at[idx, "zoning_id"]])
+        ids = (parcel_data.at[idx, "muni_base_id"]
+            if isinstance(parcel_data.at[idx, "muni_base_id"], (list, tuple))
+            else [parcel_data.at[idx, "muni_base_id"]])
         # Subset zoning_all by those IDs
         dist_df = zoning_all[zoning_all["zoning_id"].isin(ids)]
         # Skip if there isn’t exactly one matching district
@@ -259,8 +279,7 @@ def zp_run_zoning_checks(
             # If all are NaN or their safe sum is zero, mark as no setback
             if sb.isnull().all() or sb.apply(safe_sum).sum() == 0:
                 no_setback.add(pid)
-    if print_checkpoints:
-        print(f"___get_zoning_req___ {time.time()-t2:.1f}s\n")
+    print(f"___get_zoning_req___ {time.time()-t2:.1f}s\n")
 
     # ————————— 5. Initial checks (res_type, constraints, unit_size) ————————— #
     t3 = time.time()
@@ -268,9 +287,9 @@ def zp_run_zoning_checks(
     for idx in parcel_dims.index:
         parcel_data = parcel_dims.loc[[idx]]
         pid = parcel_data.at[idx, "parcel_id"]
-        ids = (parcel_data.at[idx, "zoning_id"]
-            if isinstance(parcel_data.at[idx, "zoning_id"], (list, tuple))
-            else [parcel_data.at[idx, "zoning_id"]])
+        ids = (parcel_data.at[idx, "muni_base_id"]
+            if isinstance(parcel_data.at[idx, "muni_base_id"], (list, tuple))
+            else [parcel_data.at[idx, "muni_base_id"]])
         dist_df = zoning_all[zoning_all["zoning_id"].isin(ids)]
         # Skip if there isn’t exactly one matching district
         if dist_df.shape[0] != 1:
@@ -337,7 +356,7 @@ def zp_run_zoning_checks(
     # ————————— 6. Side label check ————————— #
     if "bldg_fit" in checks and not parcel_dims.empty:
         t4 = time.time()
-        known = set(parcel_geo["parcel_id"].unique())
+        known = set(parcel_geo.loc[parcel_geo["side"]!="unknown","parcel_id"])
         keep = known.union(no_setback)
         # Mark parcel_side_lbl flag
         parcel_dims["parcel_side_lbl"] = parcel_dims["parcel_id"].isin(keep)
@@ -351,8 +370,8 @@ def zp_run_zoning_checks(
         if not detailed_check:
             false_dfs.append(parcel_dims[mask])
             parcel_dims = parcel_dims[~mask]
-    if print_checkpoints:
-        print(f"___side_label_check___ {time.time()-t4:.1f}s\n")
+        if print_checkpoints:
+            print(f"___side_label_check___ {time.time()-t4:.1f}s\n")
 
     # ————————— 7. Building fit check ————————— #
     parcel_dims["bldg_fit"] = None
@@ -367,7 +386,7 @@ def zp_run_zoning_checks(
             sides = parcel_geo[parcel_geo["parcel_id"] == pid]
             if sides.empty:
                 continue
-            base_ids = parcel_dims.at[idx, "zoning_id"]
+            base_ids = parcel_dims.at[idx, "muni_base_id"]
             if not isinstance(base_ids, (list, tuple)):
                 base_ids = [base_ids]
             dist_df = zoning_all[zoning_all["zoning_id"].isin(base_ids)]
@@ -390,21 +409,25 @@ def zp_run_zoning_checks(
             mask = parcel_dims["bldg_fit"]==False
             false_dfs.append(parcel_dims[mask])
             parcel_dims = parcel_dims[~mask]
-    if print_checkpoints:
-        print(f"___bldg_fit___ {time.time()-t5:.1f}s\n")
+        if print_checkpoints:
+            print(f"___bldg_fit___ {time.time()-t5:.1f}s\n")
             
     # ————————— 8. Overlay check ————————— #
     if "overlay" in checks and not overlays.empty:
         t6 = time.time()
-        mask_overlay = parcel_dims["is_overlay"] == True
-        cur = parcel_dims.loc[mask_overlay, "maybe_reasons"].fillna("")
-        parcel_dims.loc[mask_overlay, "maybe_reasons"] = np.where(
-            cur == "", "overlay", cur + ",overlay"
+        def has_overlay(val):
+            if isinstance(val, (list, tuple)):
+                return any(pd.notna(x) for x in val)
+            return pd.notna(val)
+        mask = parcel_dims["muni_overlay_id"].apply(has_overlay)
+        parcel_dims.loc[mask, "maybe_reasons"] = (
+            parcel_dims.loc[mask, "maybe_reasons"]
+            .fillna("")
+            .apply(lambda s: "overlay" if s == "" else s + ",overlay")
         )
-        parcel_dims["check_overlay"] = np.where(mask_overlay, "MAYBE", True)
 
-    if print_checkpoints:
-        print(f"___overlay_check___ {time.time()-t6:.1f}s\n")
+        if print_checkpoints:
+            print(f"___overlay_check___ {time.time()-t6:.1f}s\n")
 
     # ————————— 9. Merge & output ————————— #
     # Concatenate all parcels removed to false_dfs plus those still in parcel_dims
@@ -420,8 +443,8 @@ def zp_run_zoning_checks(
     
     # Compute allowed & reason columns
     def summarize(r):
-        fr = r.get("false_reasons")
-        mr = r.get("maybe_reasons")
+        fr = r.get("false_reasons") or ""
+        mr = r.get("maybe_reasons") or ""
         if fr: return (False, fr)
         if mr: return ("MAYBE", mr)
         return (True, "Building allowed")
@@ -441,7 +464,7 @@ def zp_run_zoning_checks(
         drop_cols = [
             "false_reasons","maybe_reasons",
             "lot_width","lot_depth","lot_area","lot_type",
-            "zoning_id"
+             "muni_base_id","muni_pd_id","muni_overlay_id"
         ]
         keep = [c for c in final.columns if c not in drop_cols]
         out = final[keep].copy()
@@ -463,5 +486,4 @@ def zp_run_zoning_checks(
         print(f"total runtime: {total:.1f}s")
         print(f"{ct_true}/{len(out)} parcels allow the building; {ct_may}/{len(out)} maybe allow")
 
-    return gpd.GeoDataFrame(out, geometry="geometry", crs=parcels_sf.crs).to_crs(epsg=4326)
-
+    return gpd.GeoDataFrame(out, geometry="geometry", crs=parcels_sf.crs)
