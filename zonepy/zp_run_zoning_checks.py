@@ -412,7 +412,7 @@ def zp_run_zoning_checks(
     # Immediately deduplicate after summarize() to avoid identical rows entering subsequent steps
     final["_geom_wkb"] = final.geometry.apply(lambda g: g.wkb if g is not None else None)
     final = final.drop_duplicates(
-        subset=[c for c in ["parcel_id","false_reasons","maybe_reasons","_geom_wkb"] if c in final.columns],
+        subset=[c for c in ["parcel_id", "zoning_id", "false_reasons","maybe_reasons","_geom_wkb"] if c in final.columns],
         keep="first"
     )
     final = final.drop(columns=["_geom_wkb"])
@@ -435,13 +435,12 @@ def zp_run_zoning_checks(
     # Select output columns based on detailed_check
     if not detailed_check:
         out = final[[
-            "parcel_id","muni_name","dist_abbr","allowed","reason","geometry","is_duplicate"
+            "parcel_id","muni_name","dist_abbr","allowed","reason","geometry","is_duplicate","zoning_id"
         ]].copy()
     else:
         drop_cols = [
             "false_reasons","maybe_reasons",
             "lot_width","lot_depth","lot_area","lot_type",
-            "zoning_id"
         ]
         keep = [c for c in final.columns if c not in drop_cols]
         out = final[keep].copy()
