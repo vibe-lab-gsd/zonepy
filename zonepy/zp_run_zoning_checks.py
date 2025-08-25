@@ -431,19 +431,215 @@ def zp_run_zoning_checks(
         index=final.index
     )
     final["is_duplicate"] = final.duplicated(subset=["parcel_id"], keep=False)
-    
-    # Select output columns based on detailed_check
-    if not detailed_check:
-        out = final[[
-            "parcel_id","muni_name","dist_abbr","allowed","reason","geometry","is_duplicate","zoning_id"
-        ]].copy()
+        
+    def _harmonize_de_false(df):
+        """
+        把每个 parcel_id 的多行折叠成一行，显示风格对齐 R 版：
+        - 允许优先级：有 FALSE 则 FALSE；否则有 MAYBE 则 MAYBE；否则 TRUE
+        - reason 优先：PD_overlay > PD_dist > 其它（其余按去重后用“, ”连接）
+        - muni_name/dist_abbr/geometry：优先取“看起来像 base”的那行，其次 PD_overlay，再其次 PD_dist，再 overlay
+        - is_duplicate：若原始该 parcel 多行则 True
+        - 丢掉 R 默认不展示的列（如 zoning_id），列顺序对齐 R 非详细模式
+        """
+        import pandas as pd
+        import geopandas as gpd
+
+        if df.empty:
+            # 维持原始结构
+            return gpd.GeoDataFrame(df, geometry="geometry", crs=getattr(df, "crs", None))
+
+        def _priority_reason(reasons):
+            parts = []
+            for r in reasons:
+                if r is None or (isinstance(r, float) and pd.isna(r)):
+                    continue
+                for p in str(r).split(","):
+                    p = p.strip()
+                    if p:
+                        parts.append(p)
+            uniq = list(dict.fromkeys(parts))
+            if "PD_overlay" in uniq:
+                return "PD_overlay"
+            if "PD_dist" in uniq:
+                return "PD_dist"
+            return ", ".join(uniq) if uniq else "Building allowed"
+
+        def _row_priority(row):
+            reason = str(row.get("reason", "") or "")
+            abbr = str(row.get("dist_abbr", "") or "")
+            is_pd = (abbr.upper() == "PD") or ("PD_" in reason)
+            is_overlay = ("overlay" in reason.lower()) and not is_pd
+            if not is_pd and not is_overlay:
+                return 0  # base
+            if "PD_overlay" in reason:
+                return 1
+            if "PD_dist" in reason:
+                return 2
+            if is_overlay:
+                return 3
+            return 4
+
+        groups = []
+        for pid, g in df.groupby("parcel_id", dropna=False):
+            g = g.copy()
+            orig_multi = (len(g) > 1)
+
+            vals = list(g["allowed"]) if "allowed" in g.columns else []
+            if any(v is False or str(v).upper() == "FALSE" for v in vals):
+                allowed = False
+            elif any(str(v) == "MAYBE" for v in vals):
+                allowed = "MAYBE"
+            else:
+                allowed = True
+
+            reason = _priority_reason(g["reason"].tolist()) if "reason" in g.columns else (
+                "Building allowed" if allowed is True else ("MAYBE" if allowed == "MAYBE" else "")
+            )
+
+            g["_sel_rank"] = g.apply(_row_priority, axis=1)
+            g = g.sort_values(["_sel_rank"]).drop(columns=["_sel_rank"])
+            top = g.iloc[0]
+
+            rec = {
+                "parcel_id": pid,
+                "allowed": allowed,
+                "reason": reason if reason else ("Building allowed" if allowed is True else ""),
+                "geometry": top["geometry"],
+            }
+            if "muni_name" in g.columns:
+                rec["muni_name"] = top.get("muni_name")
+            if "dist_abbr" in g.columns:
+                rec["dist_abbr"] = top.get("dist_abbr")
+
+            rec["is_duplicate"] = True if orig_multi else False
+            groups.append(rec)
+
+        out = gpd.GeoDataFrame(groups, geometry="geometry", crs=getattr(df, "crs", None))
+        if "reason" in out.columns:
+            out["reason"] = out["reason"].astype(str).str.replace(r"\s*,\s*", ", ", regex=True)
+
+        cols_order = [c for c in ["parcel_id", "muni_name", "dist_abbr", "allowed", "reason", "geometry", "is_duplicate"] if c in out.columns]
+        out = out[cols_order]
+        return out
+
+    def _harmonize_de_true(df):
+        """
+        detailed_check=True 时使用：
+        - 每个 parcel_id 仍然“折叠成一行”（与 R 非详细口径一致），
+        但尽量保留原 df 的其它列（从优先行取值）。
+        - allowed/reason/is_duplicate 按聚合逻辑重算，以确保与 R 结果口径一致。
+        """
+        import pandas as pd
+        import geopandas as gpd
+
+        if df.empty:
+            return gpd.GeoDataFrame(df, geometry="geometry", crs=getattr(df, "crs", None))
+
+        def _priority_reason(reasons):
+            parts = []
+            for r in reasons:
+                if r is None or (isinstance(r, float) and pd.isna(r)):
+                    continue
+                for p in str(r).split(","):
+                    p = p.strip()
+                    if p:
+                        parts.append(p)
+            uniq = list(dict.fromkeys(parts))
+            if "PD_overlay" in uniq:
+                return "PD_overlay"
+            if "PD_dist" in uniq:
+                return "PD_dist"
+            return ", ".join(uniq) if uniq else "Building allowed"
+
+        def _row_priority(row):
+            reason = str(row.get("reason", "") or "")
+            abbr = str(row.get("dist_abbr", "") or "")
+            is_pd = (abbr.upper() == "PD") or ("PD_" in reason)
+            is_overlay = ("overlay" in reason.lower()) and not is_pd
+            if not is_pd and not is_overlay:
+                return 0
+            if "PD_overlay" in reason:
+                return 1
+            if "PD_dist" in reason:
+                return 2
+            if is_overlay:
+                return 3
+            return 4
+
+        # 哪些列不应在 detailed 输出里重复保留（你可按需再扩展）
+        drop_cols_soft = []  # detailed 模式通常不硬删列，这里给空
+
+        groups = []
+        all_cols = list(df.columns)
+        geom_col = "geometry" if "geometry" in df.columns else None
+
+        for pid, g in df.groupby("parcel_id", dropna=False):
+            g = g.copy()
+            orig_multi = (len(g) > 1)
+
+            # 计算 parcel 级 allowed
+            vals = list(g["allowed"]) if "allowed" in g.columns else []
+            if any(v is False or str(v).upper() == "FALSE" for v in vals):
+                allowed = False
+            elif any(str(v) == "MAYBE" for v in vals):
+                allowed = "MAYBE"
+            else:
+                allowed = True
+
+            # 计算 parcel 级 reason
+            reason = _priority_reason(g["reason"].tolist()) if "reason" in g.columns else (
+                "Building allowed" if allowed is True else ("MAYBE" if allowed == "MAYBE" else "")
+            )
+
+            # 选“优先行”用于回填其它列
+            g["_sel_rank"] = g.apply(_row_priority, axis=1)
+            g = g.sort_values(["_sel_rank"]).drop(columns=["_sel_rank"])
+            top = g.iloc[0]
+
+            rec = {}
+            # 先把所有列都带上（从优先行取值）
+            for c in all_cols:
+                if c in drop_cols_soft:
+                    continue
+                rec[c] = top[c]
+
+            # 再覆盖最终口径字段
+            rec["parcel_id"] = pid
+            rec["allowed"] = allowed
+            rec["reason"] = reason if reason else ("Building allowed" if allowed is True else "")
+            if geom_col:
+                rec[geom_col] = top[geom_col]
+            rec["is_duplicate"] = True if orig_multi else False
+
+            groups.append(rec)
+
+        out = gpd.GeoDataFrame(groups, geometry=geom_col, crs=getattr(df, "crs", None))
+        if "reason" in out.columns:
+            out["reason"] = out["reason"].astype(str).str.replace(r"\s*,\s*", ", ", regex=True)
+        return out
+
+    # —— Harmonize（两种模式都可折叠）——
+    if detailed_check:
+        # detailed：尽量保留更多列，但按 parcel 折叠
+        out = _harmonize_de_true(final.copy())
     else:
-        drop_cols = [
-            "false_reasons","maybe_reasons",
-            "lot_width","lot_depth","lot_area","lot_type",
-        ]
-        keep = [c for c in final.columns if c not in drop_cols]
-        out = final[keep].copy()
+        # 非详细：与 R 默认展示强对齐，列更精简
+        cols_for_hz = [c for c in ["parcel_id","muni_name","dist_abbr","allowed","reason","geometry","is_duplicate","zoning_id"]
+                    if c in final.columns]
+        out = _harmonize_de_false(final[cols_for_hz].copy())
+
+    # # Select output columns based on detailed_check
+    # if not detailed_check:
+    #     out = final[[
+    #         "parcel_id","muni_name","dist_abbr","allowed","reason","geometry","is_duplicate","zoning_id"
+    #     ]].copy()
+    # else:
+    #     drop_cols = [
+    #         "false_reasons","maybe_reasons",
+    #         "lot_width","lot_depth","lot_area","lot_type",
+    #     ]
+    #     keep = [c for c in final.columns if c not in drop_cols]
+    #     out = final[keep].copy()
 
     # Save to GeoJSON if requested
     if save_to:
