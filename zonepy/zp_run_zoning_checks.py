@@ -432,235 +432,234 @@ def zp_run_zoning_checks(
     )
     final["is_duplicate"] = final.duplicated(subset=["parcel_id"], keep=False)
             
-    def _harmonize_with_R(final_df, *, detailed=False):
-        """
-        与R严格对齐的后处理（仅操作 final 表，不改前面判定）：
-        1) 若组内出现 PD_overlay -> 整组：一行（或多行？见实现），allowed=False, reason='PD_overlay'
-        2) 否则若组内出现 PD（非 overlay）-> 整组：allowed=False, reason='PD_dist'
-        3) 否则若同一 parcel_id 有多个 base 覆盖 -> 保留多行（不折叠），并 is_duplicate=True
-        4) 否则：
-        - overlay（非PD） -> allowed='MAYBE'，reason 添加 'overlay'
-        - 结合组内 allowed：False > MAYBE > True
-        - 折叠为一行，代表行仅用于 muni_name/dist_abbr/geometry 取值
-        detailed=False：输出精简列；True：尽量保留更多列（从代表行取）
-        """
-        import pandas as pd
-        import geopandas as gpd
+    # def _harmonize_with_R(final_df, *, detailed=False):
+    #     """
+    #     与R严格对齐的后处理（仅操作 final 表，不改前面判定）：
+    #     1) 若组内出现 PD_overlay -> 整组：一行（或多行？见实现），allowed=False, reason='PD_overlay'
+    #     2) 否则若组内出现 PD（非 overlay）-> 整组：allowed=False, reason='PD_dist'
+    #     3) 否则若同一 parcel_id 有多个 base 覆盖 -> 保留多行（不折叠），并 is_duplicate=True
+    #     4) 否则：
+    #     - overlay（非PD） -> allowed='MAYBE'，reason 添加 'overlay'
+    #     - 结合组内 allowed：False > MAYBE > True
+    #     - 折叠为一行，代表行仅用于 muni_name/dist_abbr/geometry 取值
+    #     detailed=False：输出精简列；True：尽量保留更多列（从代表行取）
+    #     """
+    #     import pandas as pd
+    #     import geopandas as gpd
 
-        if final_df.empty:
-            return gpd.GeoDataFrame(final_df, geometry="geometry", crs=getattr(final_df, "crs", None))
+    #     if final_df.empty:
+    #         return gpd.GeoDataFrame(final_df, geometry="geometry", crs=getattr(final_df, "crs", None))
 
-        # 工具函数
-        def _normalize_reasons(series):
-            s = series.fillna("").astype(str)
-            # 统一逗号空格
-            s = s.str.replace(r"\s*,\s*", ", ", regex=True)
-            return s
+    #     # 工具函数
+    #     def _normalize_reasons(series):
+    #         s = series.fillna("").astype(str)
+    #         # 统一逗号空格
+    #         s = s.str.replace(r"\s*,\s*", ", ", regex=True)
+    #         return s
 
-        def _agg_allowed(vals):
-            vals = [str(v) for v in vals]
-            if any(v.upper() == "FALSE" or v is False for v in vals):
-                return False
-            if any(v == "MAYBE" for v in vals):
-                return "MAYBE"
-            return True
+    #     def _agg_allowed(vals):
+    #         vals = [str(v) for v in vals]
+    #         if any(v.upper() == "FALSE" or v is False for v in vals):
+    #             return False
+    #         if any(v == "MAYBE" for v in vals):
+    #             return "MAYBE"
+    #         return True
 
-        def _join_reasons(reasons):
-            parts = []
-            for r in reasons:
-                if not r:
-                    continue
-                for p in str(r).split(","):
-                    p = p.strip()
-                    if p:
-                        parts.append(p)
-            # 去重，维持顺序
-            uniq = list(dict.fromkeys(parts))
-            # 保留 R 优先级语义（但这里只在 overlay 场景用；PD_* 已在前面处理掉）
-            return ", ".join(uniq) if uniq else "Building allowed"
+    #     def _join_reasons(reasons):
+    #         parts = []
+    #         for r in reasons:
+    #             if not r:
+    #                 continue
+    #             for p in str(r).split(","):
+    #                 p = p.strip()
+    #                 if p:
+    #                     parts.append(p)
+    #         # 去重，维持顺序
+    #         uniq = list(dict.fromkeys(parts))
+    #         # 保留 R 优先级语义（但这里只在 overlay 场景用；PD_* 已在前面处理掉）
+    #         return ", ".join(uniq) if uniq else "Building allowed"
 
-        def _row_rank(row):
-            # 代表行优先级（只用于拿 labels/geometry；不影响 allowed/reason 聚合）
-            # base(0) > PD_overlay(1) > PD_dist(2) > overlay(3) > other(4)
-            if row.get("is_base", False):
-                return 0
-            if row.get("is_pd_overlay", False):
-                return 1
-            if row.get("is_pd", False):
-                return 2
-            if row.get("is_overlay", False):
-                return 3
-            return 4
+    #     def _row_rank(row):
+    #         # 代表行优先级（只用于拿 labels/geometry；不影响 allowed/reason 聚合）
+    #         # base(0) > PD_overlay(1) > PD_dist(2) > overlay(3) > other(4)
+    #         if row.get("is_base", False):
+    #             return 0
+    #         if row.get("is_pd_overlay", False):
+    #             return 1
+    #         if row.get("is_pd", False):
+    #             return 2
+    #         if row.get("is_overlay", False):
+    #             return 3
+    #         return 4
 
-        out_blocks = []
-        slim_cols = [c for c in ["parcel_id","muni_name","dist_abbr","allowed","reason","geometry","is_duplicate"] if c in final_df.columns]
+    #     out_blocks = []
+    #     slim_cols = [c for c in ["parcel_id","muni_name","dist_abbr","allowed","reason","geometry","is_duplicate"] if c in final_df.columns]
 
-        # 规范一次 reason
-        if "reason" in final_df.columns:
-            final_df = final_df.copy()
-            final_df["reason"] = _normalize_reasons(final_df["reason"])
+    #     # 规范一次 reason
+    #     if "reason" in final_df.columns:
+    #         final_df = final_df.copy()
+    #         final_df["reason"] = _normalize_reasons(final_df["reason"])
 
-        for pid, g in final_df.groupby("parcel_id", dropna=False):
-            g = g.copy()
+    #     for pid, g in final_df.groupby("parcel_id", dropna=False):
+    #         g = g.copy()
 
-            # 1) PD_overlay 整组否决
-            if "is_pd_overlay" in g.columns and g["is_pd_overlay"].any():
-                # 保持一行输出更清晰；代表行取 is_pd_overlay=True 的第一行，否则按 rank
-                g["_rank"] = g.apply(_row_rank, axis=1)
-                gg = g[g.get("is_pd_overlay", False) == True] if "is_pd_overlay" in g.columns else g
-                top = gg.iloc[0] if not gg.empty else g.sort_values("_rank").iloc[0]
-                rec = {
-                    "parcel_id": pid,
-                    "muni_name": top.get("muni_name"),
-                    "dist_abbr": top.get("dist_abbr"),
-                    "allowed": False,
-                    "reason": "PD_overlay",
-                    "geometry": top.get("geometry"),
-                    "is_duplicate": (len(g) > 1)
-                }
-                if detailed:
-                    # 尽量保留更多列（从代表行取），再覆盖关键列
-                    full = top.to_dict()
-                    full.update(rec)
-                    out_blocks.append(full)
-                else:
-                    out_blocks.append(rec)
-                continue
+    #         # 1) PD_overlay 整组否决
+    #         if "is_pd_overlay" in g.columns and g["is_pd_overlay"].any():
+    #             # 保持一行输出更清晰；代表行取 is_pd_overlay=True 的第一行，否则按 rank
+    #             g["_rank"] = g.apply(_row_rank, axis=1)
+    #             gg = g[g.get("is_pd_overlay", False) == True] if "is_pd_overlay" in g.columns else g
+    #             top = gg.iloc[0] if not gg.empty else g.sort_values("_rank").iloc[0]
+    #             rec = {
+    #                 "parcel_id": pid,
+    #                 "muni_name": top.get("muni_name"),
+    #                 "dist_abbr": top.get("dist_abbr"),
+    #                 "allowed": False,
+    #                 "reason": "PD_overlay",
+    #                 "geometry": top.get("geometry"),
+    #                 "is_duplicate": (len(g) > 1)
+    #             }
+    #             if detailed:
+    #                 # 尽量保留更多列（从代表行取），再覆盖关键列
+    #                 full = top.to_dict()
+    #                 full.update(rec)
+    #                 out_blocks.append(full)
+    #             else:
+    #                 out_blocks.append(rec)
+    #             continue
 
-            # 2) 仅 PD（非 overlay）整组否决
-            if "is_pd" in g.columns and g["is_pd"].any():
-                # 但剔除 overlay 的 PD 已在上一步处理；这里只要存在 is_pd=True 的行即可
-                g["_rank"] = g.apply(_row_rank, axis=1)
-                gg = g[g.get("is_pd", False) == True]
-                top = gg.iloc[0] if not gg.empty else g.sort_values("_rank").iloc[0]
-                rec = {
-                    "parcel_id": pid,
-                    "muni_name": top.get("muni_name"),
-                    "dist_abbr": top.get("dist_abbr"),
-                    "allowed": False,
-                    "reason": "PD_dist",
-                    "geometry": top.get("geometry"),
-                    "is_duplicate": (len(g) > 1)
-                }
-                if detailed:
-                    full = top.to_dict()
-                    full.update(rec)
-                    out_blocks.append(full)
-                else:
-                    out_blocks.append(rec)
-                continue
+    #         # 2) 仅 PD（非 overlay）整组否决
+    #         if "is_pd" in g.columns and g["is_pd"].any():
+    #             # 但剔除 overlay 的 PD 已在上一步处理；这里只要存在 is_pd=True 的行即可
+    #             g["_rank"] = g.apply(_row_rank, axis=1)
+    #             gg = g[g.get("is_pd", False) == True]
+    #             top = gg.iloc[0] if not gg.empty else g.sort_values("_rank").iloc[0]
+    #             rec = {
+    #                 "parcel_id": pid,
+    #                 "muni_name": top.get("muni_name"),
+    #                 "dist_abbr": top.get("dist_abbr"),
+    #                 "allowed": False,
+    #                 "reason": "PD_dist",
+    #                 "geometry": top.get("geometry"),
+    #                 "is_duplicate": (len(g) > 1)
+    #             }
+    #             if detailed:
+    #                 full = top.to_dict()
+    #                 full.update(rec)
+    #                 out_blocks.append(full)
+    #             else:
+    #                 out_blocks.append(rec)
+    #             continue
 
-            # 3) 多 base -> 保留多行（不折叠），并 is_duplicate=True
-            is_base = g.get("is_base", pd.Series(False, index=g.index))
-            base_rows = g[is_base] if "is_base" in g.columns else g.iloc[0:0]
-            multi_base = False
-            if not base_rows.empty:
-                if "zoning_id" in base_rows.columns:
-                    multi_base = base_rows["zoning_id"].nunique(dropna=True) > 1
-                elif "dist_abbr" in base_rows.columns:
-                    multi_base = base_rows["dist_abbr"].nunique(dropna=True) > 1
+    #         # 3) 多 base -> 保留多行（不折叠），并 is_duplicate=True
+    #         is_base = g.get("is_base", pd.Series(False, index=g.index))
+    #         base_rows = g[is_base] if "is_base" in g.columns else g.iloc[0:0]
+    #         multi_base = False
+    #         if not base_rows.empty:
+    #             if "zoning_id" in base_rows.columns:
+    #                 multi_base = base_rows["zoning_id"].nunique(dropna=True) > 1
+    #             elif "dist_abbr" in base_rows.columns:
+    #                 multi_base = base_rows["dist_abbr"].nunique(dropna=True) > 1
 
-            if multi_base:
-                gg = g.copy()
-                gg["is_duplicate"] = True
-                # Overlay（非PD）行若存在，可把它们的 allowed 调整为 MAYBE 并在 reason 加 overlay（不改动原判定也行）
-                # 但与R一致：R是在 overlay 阶段把通过所有检查的剩余行标注 MAYBE；这里保持已有 allowed/ reason，仅统一 is_duplicate。
-                if detailed:
-                    out_blocks.append(gg)
-                else:
-                    out_blocks.append(gg[slim_cols] if slim_cols else gg)
-                continue
+    #         if multi_base:
+    #             gg = g.copy()
+    #             gg["is_duplicate"] = True
+    #             # Overlay（非PD）行若存在，可把它们的 allowed 调整为 MAYBE 并在 reason 加 overlay（不改动原判定也行）
+    #             # 但与R一致：R是在 overlay 阶段把通过所有检查的剩余行标注 MAYBE；这里保持已有 allowed/ reason，仅统一 is_duplicate。
+    #             if detailed:
+    #                 out_blocks.append(gg)
+    #             else:
+    #                 out_blocks.append(gg[slim_cols] if slim_cols else gg)
+    #             continue
 
-            # 4) 单一 base / 无 base：按 overlay 与 allowed 聚合后折叠一行
-            # 组层面的 allowed 聚合
-            grp_allowed = _agg_allowed(g["allowed"]) if "allowed" in g.columns else True
+    #         # 4) 单一 base / 无 base：按 overlay 与 allowed 聚合后折叠一行
+    #         # 组层面的 allowed 聚合
+    #         grp_allowed = _agg_allowed(g["allowed"]) if "allowed" in g.columns else True
 
-            # overlay（非PD）→ MAYBE + reason 加 'overlay'
-            # 注意：若本就有 False，这里的 MAYBE 不覆盖 False
-            if "is_overlay" in g.columns and g["is_overlay"].any():
-                if grp_allowed is True:
-                    grp_allowed = "MAYBE"
-                # 合成/追加 overlay 到 reason（只在最终为 TRUE/MAYBE 时有意义）
-                if "reason" in g.columns:
-                    all_r = g["reason"].tolist() + ["overlay"]
-                    grp_reason = _join_reasons(all_r)
-                else:
-                    grp_reason = "overlay"
-            else:
-                # 没有 overlay：按已有 reason 聚合
-                grp_reason = _join_reasons(g["reason"].tolist()) if "reason" in g.columns else (
-                    "Building allowed" if grp_allowed is True else ("MAYBE" if grp_allowed == "MAYBE" else "")
-                )
+    #         # overlay（非PD）→ MAYBE + reason 加 'overlay'
+    #         # 注意：若本就有 False，这里的 MAYBE 不覆盖 False
+    #         if "is_overlay" in g.columns and g["is_overlay"].any():
+    #             if grp_allowed is True:
+    #                 grp_allowed = "MAYBE"
+    #             # 合成/追加 overlay 到 reason（只在最终为 TRUE/MAYBE 时有意义）
+    #             if "reason" in g.columns:
+    #                 all_r = g["reason"].tolist() + ["overlay"]
+    #                 grp_reason = _join_reasons(all_r)
+    #             else:
+    #                 grp_reason = "overlay"
+    #         else:
+    #             # 没有 overlay：按已有 reason 聚合
+    #             grp_reason = _join_reasons(g["reason"].tolist()) if "reason" in g.columns else (
+    #                 "Building allowed" if grp_allowed is True else ("MAYBE" if grp_allowed == "MAYBE" else "")
+    #             )
 
-            # 代表行用于拿 labels/geometry 或 detailed 时补其它列
-            g["_rank"] = g.apply(_row_rank, axis=1)
-            top = g.sort_values("_rank").iloc[0]
+    #         # 代表行用于拿 labels/geometry 或 detailed 时补其它列
+    #         g["_rank"] = g.apply(_row_rank, axis=1)
+    #         top = g.sort_values("_rank").iloc[0]
 
-            base_rec = {
-                "parcel_id": pid,
-                "muni_name": top.get("muni_name"),
-                "dist_abbr": top.get("dist_abbr"),
-                "allowed": grp_allowed,
-                "reason": grp_reason if grp_reason else ("Building allowed" if grp_allowed is True else ""),
-                "geometry": top.get("geometry"),
-                "is_duplicate": (len(g) > 1)
-            }
+    #         base_rec = {
+    #             "parcel_id": pid,
+    #             "muni_name": top.get("muni_name"),
+    #             "dist_abbr": top.get("dist_abbr"),
+    #             "allowed": grp_allowed,
+    #             "reason": grp_reason if grp_reason else ("Building allowed" if grp_allowed is True else ""),
+    #             "geometry": top.get("geometry"),
+    #             "is_duplicate": (len(g) > 1)
+    #         }
 
-            if detailed:
-                full = top.to_dict()
-                full.update(base_rec)
-                out_blocks.append(full)
-            else:
-                out_blocks.append(base_rec)
+    #         if detailed:
+    #             full = top.to_dict()
+    #             full.update(base_rec)
+    #             out_blocks.append(full)
+    #         else:
+    #             out_blocks.append(base_rec)
 
-        # 组装输出
-        if any(isinstance(b, (pd.DataFrame, gpd.GeoDataFrame)) for b in out_blocks):
-            out = pd.concat([b if isinstance(b, (pd.DataFrame, gpd.GeoDataFrame)) else pd.DataFrame([b]) for b in out_blocks],
-                            ignore_index=True)
-        else:
-            out = pd.DataFrame(out_blocks)
+    #     # 组装输出
+    #     if any(isinstance(b, (pd.DataFrame, gpd.GeoDataFrame)) for b in out_blocks):
+    #         out = pd.concat([b if isinstance(b, (pd.DataFrame, gpd.GeoDataFrame)) else pd.DataFrame([b]) for b in out_blocks],
+    #                         ignore_index=True)
+    #     else:
+    #         out = pd.DataFrame(out_blocks)
 
-        out = gpd.GeoDataFrame(out, geometry="geometry" if "geometry" in out.columns else None, crs=getattr(final_df, "crs", None))
+    #     out = gpd.GeoDataFrame(out, geometry="geometry" if "geometry" in out.columns else None, crs=getattr(final_df, "crs", None))
 
-        # 非详细：统一列序
-        if not detailed:
-            col_order = [c for c in ["parcel_id","muni_name","dist_abbr","allowed","reason","geometry","is_duplicate"] if c in out.columns]
-            out = out[col_order]
-        else:
-            # 详细：确保 reason 逗号空格规范
-            if "reason" in out.columns:
-                out["reason"] = _normalize_reasons(out["reason"])
+    #     # 非详细：统一列序
+    #     if not detailed:
+    #         col_order = [c for c in ["parcel_id","muni_name","dist_abbr","allowed","reason","geometry","is_duplicate"] if c in out.columns]
+    #         out = out[col_order]
+    #     else:
+    #         # 详细：确保 reason 逗号空格规范
+    #         if "reason" in out.columns:
+    #             out["reason"] = _normalize_reasons(out["reason"])
 
-        return out
+    #     return out
 
-
-    # —— 与 R 完全对齐的后处理（利用 is_* 标志列）——
-    if detailed_check:
-        # detailed：先保留你想要的列，再做R对齐的组裁决
-        drop_cols = ["false_reasons","maybe_reasons","lot_width","lot_depth","lot_area","lot_type"]
-        keep = [c for c in final.columns if c not in drop_cols]
-        interim = final[keep].copy()
-        out = _harmonize_with_R(interim, detailed=True)
-    else:
-        # 非详细：R默认展示口径（精简列），但严格遵循PD/overlay/多base规则
-        cols_for = [c for c in ["parcel_id","muni_name","dist_abbr","allowed","reason","geometry","is_duplicate","zoning_id",
-                                "is_overlay","is_pd","is_pd_overlay","is_base"]
-                    if c in final.columns]
-        interim = final[cols_for].copy()
-        out = _harmonize_with_R(interim, detailed=False)
-
-    # # Select output columns based on detailed_check
-    # if not detailed_check:
-    #     out = final[[
-    #         "parcel_id","muni_name","dist_abbr","allowed","reason","geometry","is_duplicate","zoning_id"
-    #     ]].copy()
-    # else:
-    #     drop_cols = [
-    #         "false_reasons","maybe_reasons",
-    #         "lot_width","lot_depth","lot_area","lot_type",
-    #     ]
+    # # —— 与 R 完全对齐的后处理（利用 is_* 标志列）——
+    # if detailed_check:
+    #     # detailed：先保留你想要的列，再做R对齐的组裁决
+    #     drop_cols = ["false_reasons","maybe_reasons","lot_width","lot_depth","lot_area","lot_type"]
     #     keep = [c for c in final.columns if c not in drop_cols]
-    #     out = final[keep].copy()
+    #     interim = final[keep].copy()
+    #     out = _harmonize_with_R(interim, detailed=True)
+    # else:
+    #     # 非详细：R默认展示口径（精简列），但严格遵循PD/overlay/多base规则
+    #     cols_for = [c for c in ["parcel_id","muni_name","dist_abbr","allowed","reason","geometry","is_duplicate","zoning_id",
+    #                             "is_overlay","is_pd","is_pd_overlay","is_base"]
+    #                 if c in final.columns]
+    #     interim = final[cols_for].copy()
+    #     out = _harmonize_with_R(interim, detailed=False)
+
+    # Select output columns based on detailed_check
+    if not detailed_check:
+        out = final[[
+            "parcel_id","muni_name","dist_abbr","allowed","reason","geometry","is_duplicate","zoning_id"
+        ]].copy()
+    else:
+        drop_cols = [
+            "false_reasons","maybe_reasons",
+            "lot_width","lot_depth","lot_area","lot_type",
+        ]
+        keep = [c for c in final.columns if c not in drop_cols]
+        out = final[keep].copy()
 
     # Save to GeoJSON if requested
     if save_to:
